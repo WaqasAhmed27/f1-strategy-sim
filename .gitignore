@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.venv*/
+.env
+.env.*
+
+# Data & artifacts
+/data/
+/data_cache/
+/models/
+/.cache/
+/.fastf1/
+wandb/
+mlruns/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db 
