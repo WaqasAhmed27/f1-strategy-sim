@@ -11,6 +11,7 @@ from f1sim.features.builder import build_features_from_dir, build_features_for_r
 from f1sim.models.baseline import PositionRegressor, predict_order, estimate_finish_gaps
 from f1sim.models.advanced import XGBoostRegressor, CatBoostRegressorWrapper, compare_models
 from f1sim.models.hyperparameter_tuning import HyperparameterOptimizer, find_best_params, analyze_parameter_importance
+from f1sim.models.feature_selection import FeatureSelector, find_optimal_feature_set
 
 app = typer.Typer(help="F1 Strategy Sim CLI")
 
@@ -497,6 +498,183 @@ def predict_optimized(
 	pred = mdl.predict(X)
 	order_df = predict_order(pred, meta)
 	order_df = estimate_finish_gaps(order_df, X, race_dir)
+	cols = ["pred_final_pos", "Abbreviation", "TeamName", "pred_position", "est_gap_to_winner_s"] if "Abbreviation" in order_df.columns else ["pred_final_pos", "DriverNumber", "pred_position", "est_gap_to_winner_s"]
+	print(order_df[cols])
+
+
+@app.command()
+def analyze_features(
+	races: str = typer.Option(..., help="Comma-separated race IDs (e.g., '2024-1,2024-2')"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+	cv_splits: int = typer.Option(5, help="Number of CV splits"),
+	results_path: str = typer.Option("models/feature_analysis.json", help="Path to save results"),
+):
+	"""Comprehensive feature selection analysis."""
+	race_ids = [rid.strip() for rid in races.split(",")]
+	print(f"[bold green]Feature Selection Analysis[/bold green]: {model_type} on {len(race_ids)} races")
+	
+	config = AppConfig.load("configs/default.yaml")
+	PathRepository(config).ensure()
+	
+	# Ensure data for all races
+	for rid in race_ids:
+		season, rnd, session = parse_race_id(rid)
+		ensure_data_for_race(data_root, season, rnd, session, config)
+	
+	X, y, meta, groups = build_features_for_races(data_root, race_ids)
+	
+	# Initialize feature selector
+	selector = FeatureSelector(model_type=model_type)
+	
+	# Run comprehensive analysis
+	results = selector.comprehensive_analysis(X, y, groups)
+	
+	# Save results
+	selector.save_results(results, results_path)
+	
+	# Display feature importance table
+	importance_table = selector.get_feature_importance_table(top_n=20)
+	print(importance_table)
+	
+	# Find optimal feature set
+	optimal_set, optimal_results = find_optimal_feature_set(results['evaluation_results'])
+	
+	print(f"\n[bold green]Optimal Feature Set:[/bold green] {optimal_set}")
+	print(f"CV MAE: {optimal_results.get('cv_mae_mean', 'N/A'):.3f} ± {optimal_results.get('cv_mae_std', 'N/A'):.3f}")
+	print(f"Number of features: {optimal_results.get('n_features', 'N/A')}")
+	
+	print(f"\n[bold green]Feature Selection Results:[/bold green]")
+	for set_name, eval_results in results['evaluation_results'].items():
+		if 'cv_mae_mean' in eval_results:
+			print(f"{set_name}: CV MAE = {eval_results['cv_mae_mean']:.3f} ± {eval_results['cv_mae_std']:.3f} ({eval_results['n_features']} features)")
+	
+	print(f"\n[bold green]Results saved to:[/bold green] {results_path}")
+
+
+@app.command()
+def train_with_selected_features(
+	races: str = typer.Option(..., help="Comma-separated race IDs (e.g., '2024-1,2024-2')"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+	feature_set: str = typer.Option("top_15_importance", help="Feature set to use"),
+	results_path: str = typer.Option("models/feature_analysis.json", help="Path to feature analysis results"),
+	model_path: str = typer.Option("models/selected_features_model.joblib", help="Path to save model"),
+	cv_splits: int = typer.Option(5, help="Number of CV splits"),
+):
+	"""Train a model using selected features from feature analysis."""
+	race_ids = [rid.strip() for rid in races.split(",")]
+	print(f"[bold green]Training with selected features[/bold green]: {model_type} using {feature_set}")
+	
+	config = AppConfig.load("configs/default.yaml")
+	PathRepository(config).ensure()
+	
+	# Ensure data for all races
+	for rid in race_ids:
+		season, rnd, session = parse_race_id(rid)
+		ensure_data_for_race(data_root, season, rnd, session, config)
+	
+	X, y, meta, groups = build_features_for_races(data_root, race_ids)
+	
+	# Load feature analysis results
+	selector = FeatureSelector(model_type=model_type)
+	results = selector.load_results(results_path)
+	
+	# Get selected features
+	if feature_set in results['evaluation_results']:
+		selected_features = results['evaluation_results'][feature_set]['features']
+	else:
+		# Fallback to top features by importance
+		importance_scores = results['importance_analysis']
+		n_features = int(feature_set.split('_')[1]) if '_' in feature_set else 15
+		selected_features = list(importance_scores.keys())[:n_features]
+	
+	print(f"Using {len(selected_features)} features: {selected_features}")
+	
+	# Select features
+	X_selected = X[selected_features]
+	
+	# Train model
+	if model_type == "xgboost":
+		mdl = XGBoostRegressor()
+	elif model_type == "catboost":
+		mdl = CatBoostRegressorWrapper()
+	else:
+		raise ValueError(f"Unknown model type: {model_type}")
+	
+	mdl.fit(X_selected, y)
+	mdl.save(model_path)
+	
+	# Cross-validation
+	from sklearn.model_selection import GroupKFold
+	from sklearn.metrics import mean_absolute_error
+	
+	gkf = GroupKFold(n_splits=cv_splits)
+	maes = []
+	for tr, te in gkf.split(X_selected, y, groups):
+		temp_mdl = XGBoostRegressor() if model_type == "xgboost" else CatBoostRegressorWrapper()
+		temp_mdl.fit(X_selected.iloc[tr], y.iloc[tr])
+		yp = temp_mdl.predict(X_selected.iloc[te])
+		maes.append(mean_absolute_error(y.iloc[te], yp))
+	
+	cv_mae = float(pd.Series(maes).mean()) if maes else float("nan")
+	
+	print({
+		"samples": int(len(X_selected)),
+		"races": int(groups.nunique()),
+		"features": len(selected_features),
+		"cv_mae": round(cv_mae, 3),
+		"model_path": model_path,
+		"model_type": model_type,
+		"feature_set": feature_set
+	})
+
+
+@app.command()
+def predict_with_selected_features(
+	season: int = typer.Option(..., help="F1 season year"),
+	race_round: int = typer.Option(..., help="Championship round (1-based)"),
+	session: str = typer.Option("R", help="Session code: FP1, FP2, FP3, Q, S, R"),
+	model_path: str = typer.Option("models/selected_features_model.joblib", help="Path to saved model"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	results_path: str = typer.Option("models/feature_analysis.json", help="Path to feature analysis results"),
+	feature_set: str = typer.Option("top_15_importance", help="Feature set used"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+):
+	"""Predict finishing order using a model trained with selected features."""
+	print(f"[bold green]Predicting race with selected features[/bold green]: {model_type} using {feature_set}")
+	print(f"Season={season}, round={race_round}")
+	
+	race_dir = Path(data_root) / f"{season}_{race_round}_{session}"
+	X, y, meta = build_features_from_dir(race_dir)
+	
+	# Load feature analysis results to get selected features
+	selector = FeatureSelector(model_type=model_type)
+	results = selector.load_results(results_path)
+	
+	# Get selected features
+	if feature_set in results['evaluation_results']:
+		selected_features = results['evaluation_results'][feature_set]['features']
+	else:
+		# Fallback to top features by importance
+		importance_scores = results['importance_analysis']
+		n_features = int(feature_set.split('_')[1]) if '_' in feature_set else 15
+		selected_features = list(importance_scores.keys())[:n_features]
+	
+	# Select features
+	X_selected = X[selected_features]
+	
+	# Load and predict
+	if model_type == "xgboost":
+		mdl = XGBoostRegressor.load(model_path)
+	elif model_type == "catboost":
+		mdl = CatBoostRegressorWrapper.load(model_path)
+	else:
+		raise ValueError(f"Unknown model type: {model_type}")
+	
+	pred = mdl.predict(X_selected)
+	order_df = predict_order(pred, meta)
+	order_df = estimate_finish_gaps(order_df, X_selected, race_dir)
 	cols = ["pred_final_pos", "Abbreviation", "TeamName", "pred_position", "est_gap_to_winner_s"] if "Abbreviation" in order_df.columns else ["pred_final_pos", "DriverNumber", "pred_position", "est_gap_to_winner_s"]
 	print(order_df[cols])
 
