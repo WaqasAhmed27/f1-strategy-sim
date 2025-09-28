@@ -464,9 +464,50 @@ def build_features_from_dir(race_dir: str | Path) -> Tuple[pd.DataFrame, pd.Seri
 	# Team/driver form features
 	df = _add_team_driver_form_features(df, race_dir, race_dir.parent)
 
-	# Replace inf/nan
+	# Replace inf/nan with comprehensive cleaning
 	X = df.copy()
-	X = X.fillna({"std_lap_time": 0.0, "mean_lap_time": X["mean_lap_time"].median(), "best_lap_time": X["best_lap_time"].median(), "n_pit_laps": 0, "n_laps": 0})
+	
+	# Fill NaN values with sensible defaults
+	X = X.fillna({
+		"std_lap_time": 0.0, 
+		"mean_lap_time": X["mean_lap_time"].median(), 
+		"best_lap_time": X["best_lap_time"].median(), 
+		"n_pit_laps": 0, 
+		"n_laps": 0,
+		# Weather features
+		"AirTemp": 25.0,
+		"TrackTemp": 35.0, 
+		"Humidity": 50.0,
+		"WindSpeed": 5.0,
+		# Penalty features
+		"grid_drop": 0.0,
+		"time_penalty_seconds": 0.0,
+		"dnf_risk": 0.0,
+		"points_lost": 0.0,
+		"penalty_severity": 0.0,
+		# Pit features
+		"avg_pit_time": 0.0,
+		"pit_stops": 0,
+		"pit_efficiency": 0.0,
+		"pit_strategy_risk": 0.0,
+		# Session pace features
+		"qual_vs_race_pace": 0.0,
+		"practice_vs_race_pace": 0.0,
+		"pace_consistency": 0.0,
+		"session_adaptation": 0.0,
+		# Form features
+		"team_form_trend": 0.0,
+		"driver_form_trend": 0.0,
+		"team_consistency": 0.0,
+		"driver_consistency": 0.0,
+		# Advanced features
+		"race_pace_delta": 0.0,
+		"driver_form_meanlap_prev": X["mean_lap_time"].median()
+	})
+	
+	# Replace infinite values with finite ones
+	X = X.replace([np.inf, -np.inf], np.nan)
+	X = X.fillna(0.0)
 
 	# Target: final classified position as integer; fallback to large number if NaN
 	y = X["Position"].fillna(99).astype(int)
