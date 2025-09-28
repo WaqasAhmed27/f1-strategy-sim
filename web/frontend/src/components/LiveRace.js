@@ -16,7 +16,6 @@ import {
   PlayCircleOutlined, 
   PauseCircleOutlined,
   ReloadOutlined,
-  TrophyOutlined,
   ClockCircleOutlined
 } from '@ant-design/icons';
 import { getApiUrl, getWsUrl } from '../config';
@@ -29,8 +28,8 @@ const LiveRace = () => {
   const [predictions, setPredictions] = useState([]);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [error, setError] = useState(null);
-  const [selectedSeason, setSelectedSeason] = useState(2024);
-  const [selectedRace, setSelectedRace] = useState(1);
+  const [selectedSeason] = useState(2024);
+  const [selectedRace] = useState(1);
   
   const wsRef = useRef(null);
   const intervalRef = useRef(null);
