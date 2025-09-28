@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: f1-prediction-api
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r web/backend/requirements.txt
+      pip install -e .
+    startCommand: uvicorn web.backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONPATH
+        value: /opt/render/project/src
+      - key: FASTAPI_ENV
+        value: production
+    healthCheckPath: /health
