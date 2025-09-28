@@ -3,7 +3,7 @@ import { Card, Button, Alert, Typography, Space } from 'antd';
 import { getApiUrl } from '../config';
 import axios from 'axios';
 
-const { Title, Text } = Typography;
+const { _Title, Text } = Typography;
 
 const ApiTest = () => {
   const [apiStatus, setApiStatus] = useState('unknown');
