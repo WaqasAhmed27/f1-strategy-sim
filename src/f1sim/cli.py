@@ -9,6 +9,8 @@ from f1sim.storage.repository import PathRepository
 from f1sim.ingest.fastf1_adapter import setup_fastf1_cache, load_session
 from f1sim.features.builder import build_features_from_dir, build_features_for_races, parse_race_id
 from f1sim.models.baseline import PositionRegressor, predict_order, estimate_finish_gaps
+from f1sim.models.advanced import XGBoostRegressor, CatBoostRegressorWrapper, compare_models
+from f1sim.models.hyperparameter_tuning import HyperparameterOptimizer, find_best_params, analyze_parameter_importance
 
 app = typer.Typer(help="F1 Strategy Sim CLI")
 
@@ -235,6 +237,268 @@ def eval_multi(
 		"top3_acc": round(float(m["top3_acc"].dropna().mean()), 3) if m["top3_acc"].notna().any() else float("nan"),
 		"top10_acc": round(float(m["top10_acc"].dropna().mean()), 3) if m["top10_acc"].notna().any() else float("nan"),
 	})
+
+
+@app.command()
+def train_advanced(
+	races: str = typer.Option(..., help="Comma-separated race IDs (e.g., '2024-1,2024-2')"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+	model_path: str = typer.Option("models/advanced_position.joblib", help="Path to save model"),
+	cv_splits: int = typer.Option(5, help="Number of CV splits"),
+):
+	"""Train advanced models (XGBoost/CatBoost) on multiple races."""
+	race_ids = [rid.strip() for rid in races.split(",")]
+	print(f"[bold green]Training {model_type} model[/bold green]: races={race_ids}")
+	
+	config = AppConfig.load("configs/default.yaml")
+	PathRepository(config).ensure()
+	
+	# Ensure data for all races
+	for rid in race_ids:
+		season, rnd, session = parse_race_id(rid)
+		ensure_data_for_race(data_root, season, rnd, session, config)
+	
+	X, y, meta, groups = build_features_for_races(data_root, race_ids)
+	
+	# Train model
+	if model_type == "xgboost":
+		mdl = XGBoostRegressor()
+	elif model_type == "catboost":
+		mdl = CatBoostRegressorWrapper()
+	else:
+		raise ValueError(f"Unknown model type: {model_type}")
+	
+	mdl.fit(X, y)
+	mdl.save(model_path)
+	
+	# Cross-validation
+	from sklearn.model_selection import GroupKFold
+	from sklearn.metrics import mean_absolute_error
+	
+	gkf = GroupKFold(n_splits=cv_splits)
+	maes = []
+	for tr, te in gkf.split(X, y, groups):
+		temp_mdl = XGBoostRegressor() if model_type == "xgboost" else CatBoostRegressorWrapper()
+		temp_mdl.fit(X.iloc[tr], y.iloc[tr])
+		yp = temp_mdl.predict(X.iloc[te])
+		maes.append(mean_absolute_error(y.iloc[te], yp))
+	
+	cv_mae = float(pd.Series(maes).mean()) if maes else float("nan")
+	
+	print({
+		"samples": int(len(X)),
+		"races": int(groups.nunique()),
+		"cv_mae": round(cv_mae, 3),
+		"model_path": model_path,
+		"model_type": model_type
+	})
+
+
+@app.command()
+def compare_models_cmd(
+	races: str = typer.Option(..., help="Comma-separated race IDs (e.g., '2024-1,2024-2')"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+	cv_splits: int = typer.Option(5, help="Number of CV splits"),
+):
+	"""Compare performance of Gradient Boosting, XGBoost, and CatBoost models."""
+	race_ids = [rid.strip() for rid in races.split(",")]
+	print(f"[bold green]Comparing models[/bold green]: races={race_ids}")
+	
+	config = AppConfig.load("configs/default.yaml")
+	PathRepository(config).ensure()
+	
+	# Ensure data for all races
+	for rid in race_ids:
+		season, rnd, session = parse_race_id(rid)
+		ensure_data_for_race(data_root, season, rnd, session, config)
+	
+	X, y, meta, groups = build_features_for_races(data_root, race_ids)
+	
+	# Compare models
+	results = compare_models(X, y, groups, cv_splits)
+	
+	print("[bold]Model Comparison Results:[/bold]")
+	for model_name, mae in results.items():
+		if mae is not None:
+			print(f"{model_name}: CV MAE = {mae:.3f}")
+		else:
+			print(f"{model_name}: Not available (missing dependencies)")
+
+
+@app.command()
+def predict_advanced(
+	season: int = typer.Option(..., help="F1 season year"),
+	race_round: int = typer.Option(..., help="Championship round (1-based)"),
+	session: str = typer.Option("R", help="Session code: FP1, FP2, FP3, Q, S, R"),
+	model_path: str = typer.Option("models/advanced_position.joblib", help="Path to saved model"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+):
+	"""Predict finishing order using an advanced trained model."""
+	print(f"[bold green]Predicting race with {model_type}[/bold green]: season={season}, round={race_round}")
+	race_dir = Path(data_root) / f"{season}_{race_round}_{session}"
+	X, y, meta = build_features_from_dir(race_dir)
+	
+	if model_type == "xgboost":
+		mdl = XGBoostRegressor.load(model_path)
+	elif model_type == "catboost":
+		mdl = CatBoostRegressorWrapper.load(model_path)
+	else:
+		raise ValueError(f"Unknown model type: {model_type}")
+	
+	pred = mdl.predict(X)
+	order_df = predict_order(pred, meta)
+	order_df = estimate_finish_gaps(order_df, X, race_dir)
+	cols = ["pred_final_pos", "Abbreviation", "TeamName", "pred_position", "est_gap_to_winner_s"] if "Abbreviation" in order_df.columns else ["pred_final_pos", "DriverNumber", "pred_position", "est_gap_to_winner_s"]
+	print(order_df[cols])
+
+
+@app.command()
+def tune_hyperparameters(
+	races: str = typer.Option(..., help="Comma-separated race IDs (e.g., '2024-1,2024-2')"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+	cv_splits: int = typer.Option(5, help="Number of CV splits"),
+	fast: bool = typer.Option(False, help="Use fast parameter grid for quick testing"),
+	results_path: str = typer.Option("models/tuning_results.json", help="Path to save results"),
+):
+	"""Optimize hyperparameters for advanced models using grid search."""
+	race_ids = [rid.strip() for rid in races.split(",")]
+	print(f"[bold green]Hyperparameter tuning[/bold green]: {model_type} on {len(race_ids)} races")
+	
+	config = AppConfig.load("configs/default.yaml")
+	PathRepository(config).ensure()
+	
+	# Ensure data for all races
+	for rid in race_ids:
+		season, rnd, session = parse_race_id(rid)
+		ensure_data_for_race(data_root, season, rnd, session, config)
+	
+	X, y, meta, groups = build_features_for_races(data_root, race_ids)
+	
+	# Initialize optimizer
+	optimizer = HyperparameterOptimizer(model_type=model_type, cv_splits=cv_splits)
+	
+	# Run optimization
+	if fast:
+		best_params, best_score, results = optimizer.optimize_fast(X, y, groups)
+	else:
+		best_params, best_score, results = optimizer.optimize(X, y, groups)
+	
+	# Save results
+	optimizer.save_results(results, results_path)
+	
+	# Show top 5 results
+	top_results = find_best_params(results, top_k=5)
+	print(f"\n[bold]Top 5 Parameter Combinations:[/bold]")
+	for i, result in enumerate(top_results, 1):
+		print(f"{i}. CV MAE: {result['mean_cv_score']:.4f} ± {result['std_cv_score']:.4f}")
+		print(f"   Params: {result['params']}")
+	
+	# Analyze parameter importance
+	param_importance = analyze_parameter_importance(results)
+	print(f"\n[bold]Parameter Impact Analysis:[/bold]")
+	for param, analysis in param_importance.items():
+		print(f"{param}:")
+		print(f"  Best value: {analysis['best_value']}")
+		print(f"  Score range: {analysis['score_range']:.4f}")
+		print(f"  Impact: {analysis['impact']:.4f}")
+	
+	print(f"\n[bold green]Best parameters saved to:[/bold green] {results_path}")
+
+
+@app.command()
+def train_optimized(
+	races: str = typer.Option(..., help="Comma-separated race IDs (e.g., '2024-1,2024-2')"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+	results_path: str = typer.Option("models/tuning_results.json", help="Path to tuning results"),
+	model_path: str = typer.Option("models/optimized_position.joblib", help="Path to save optimized model"),
+	cv_splits: int = typer.Option(5, help="Number of CV splits"),
+):
+	"""Train a model using the best hyperparameters from tuning results."""
+	race_ids = [rid.strip() for rid in races.split(",")]
+	print(f"[bold green]Training optimized {model_type} model[/bold green]: races={race_ids}")
+	
+	config = AppConfig.load("configs/default.yaml")
+	PathRepository(config).ensure()
+	
+	# Ensure data for all races
+	for rid in race_ids:
+		season, rnd, session = parse_race_id(rid)
+		ensure_data_for_race(data_root, season, rnd, session, config)
+	
+	X, y, meta, groups = build_features_for_races(data_root, race_ids)
+	
+	# Load best parameters
+	optimizer = HyperparameterOptimizer(model_type=model_type, cv_splits=cv_splits)
+	results = optimizer.load_results(results_path)
+	best_params = find_best_params(results, top_k=1)[0]['params']
+	
+	print(f"Using best parameters: {best_params}")
+	
+	# Train model with best parameters
+	if model_type == "xgboost":
+		mdl = XGBoostRegressor(**best_params)
+	elif model_type == "catboost":
+		mdl = CatBoostRegressorWrapper(**best_params)
+	else:
+		raise ValueError(f"Unknown model type: {model_type}")
+	
+	mdl.fit(X, y)
+	mdl.save(model_path)
+	
+	# Cross-validation with optimized model
+	from sklearn.model_selection import GroupKFold
+	from sklearn.metrics import mean_absolute_error
+	
+	gkf = GroupKFold(n_splits=cv_splits)
+	maes = []
+	for tr, te in gkf.split(X, y, groups):
+		temp_mdl = XGBoostRegressor(**best_params) if model_type == "xgboost" else CatBoostRegressorWrapper(**best_params)
+		temp_mdl.fit(X.iloc[tr], y.iloc[tr])
+		yp = temp_mdl.predict(X.iloc[te])
+		maes.append(mean_absolute_error(y.iloc[te], yp))
+	
+	cv_mae = float(pd.Series(maes).mean()) if maes else float("nan")
+	
+	print({
+		"samples": int(len(X)),
+		"races": int(groups.nunique()),
+		"cv_mae": round(cv_mae, 3),
+		"model_path": model_path,
+		"model_type": model_type,
+		"optimized": True
+	})
+
+
+@app.command()
+def predict_optimized(
+	season: int = typer.Option(..., help="F1 season year"),
+	race_round: int = typer.Option(..., help="Championship round (1-based)"),
+	session: str = typer.Option("R", help="Session code: FP1, FP2, FP3, Q, S, R"),
+	model_path: str = typer.Option("models/optimized_position.joblib", help="Path to saved optimized model"),
+	model_type: str = typer.Option("xgboost", help="Model type: xgboost, catboost"),
+	data_root: str = typer.Option("data", help="Data directory root"),
+):
+	"""Predict finishing order using an optimized trained model."""
+	print(f"[bold green]Predicting race with optimized {model_type}[/bold green]: season={season}, round={race_round}")
+	race_dir = Path(data_root) / f"{season}_{race_round}_{session}"
+	X, y, meta = build_features_from_dir(race_dir)
+	
+	if model_type == "xgboost":
+		mdl = XGBoostRegressor.load(model_path)
+	elif model_type == "catboost":
+		mdl = CatBoostRegressorWrapper.load(model_path)
+	else:
+		raise ValueError(f"Unknown model type: {model_type}")
+	
+	pred = mdl.predict(X)
+	order_df = predict_order(pred, meta)
+	order_df = estimate_finish_gaps(order_df, X, race_dir)
+	cols = ["pred_final_pos", "Abbreviation", "TeamName", "pred_position", "est_gap_to_winner_s"] if "Abbreviation" in order_df.columns else ["pred_final_pos", "DriverNumber", "pred_position", "est_gap_to_winner_s"]
+	print(order_df[cols])
 
 
 if __name__ == "__main__":
