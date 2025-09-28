@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["python311", "pip"]
+
+[phases.install]
+cmds = [
+    "pip install -r web/backend/requirements.txt",
+    "pip install -e ."
+]
+
+[start]
+cmd = "python start_server.py"
