@@ -21,6 +21,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { getApiUrl } from '../config';
+import ApiTest from './ApiTest';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -42,11 +43,15 @@ const Dashboard = () => {
 
   const fetchModelInfo = async () => {
     try {
+      console.log('🔍 Fetching model info from:', getApiUrl('/models/info'));
       const response = await axios.get(getApiUrl('/models/info'));
+      console.log('✅ Model info received:', response.data);
       setModelInfo(response.data);
     } catch (err) {
-      console.error('Failed to fetch model info:', err);
-      console.error('API URL:', getApiUrl('/models/info'));
+      console.error('❌ Failed to fetch model info:', err);
+      console.error('🌐 API URL:', getApiUrl('/models/info'));
+      console.error('📊 Error details:', err.response?.data || err.message);
+      setError('Failed to connect to API. Check console for details.');
     }
   };
 
@@ -122,6 +127,8 @@ const Dashboard = () => {
   return (
     <div>
       <Title level={2}>🏎️ F1 Prediction Dashboard</Title>
+      
+      <ApiTest />
       
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} md={6}>

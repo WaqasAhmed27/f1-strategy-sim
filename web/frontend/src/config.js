@@ -16,6 +16,13 @@ const config = {
   }
 };
 
+// Debug logging
+console.log('🔧 F1 Prediction Config:', {
+  API_URL: config.API_URL,
+  WS_URL: config.WS_URL,
+  NODE_ENV: process.env.NODE_ENV
+});
+
 // Helper function to get full API URL
 export const getApiUrl = (endpoint) => {
   return `${config.API_URL}${endpoint}`;
