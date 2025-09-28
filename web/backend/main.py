@@ -92,11 +92,15 @@ async def startup_event():
     """Initialize the ensemble predictor on startup."""
     global ensemble_predictor
     try:
+        logger.info("Starting F1 Prediction System...")
         ensemble_predictor = EnsemblePredictor()
         await ensemble_predictor.load_models()
         logger.info("Ensemble predictor initialized successfully")
+        logger.info("F1 Prediction System ready!")
     except Exception as e:
         logger.error(f"Failed to initialize ensemble predictor: {e}")
+        # Don't fail startup if models can't be loaded
+        ensemble_predictor = None
 
 @app.get("/")
 async def root():
@@ -115,11 +119,21 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now(),
-        "models_loaded": ensemble_predictor is not None
-    }
+    try:
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "models_loaded": ensemble_predictor is not None,
+            "version": "1.0.0",
+            "service": "f1-prediction-api"
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
 
 @app.get("/models/info")
 async def get_model_info():
