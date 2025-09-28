@@ -87,6 +87,125 @@ def ingest(
 
 
 @app.command()
+def ingest_season(
+	season: int = typer.Option(..., help="F1 season year"),
+	sessions: str = typer.Option("FP1,FP2,FP3,Q,R", help="Comma-separated sessions to ingest"),
+	start_round: int = typer.Option(1, help="Starting race round (1-based)"),
+	end_round: int = typer.Option(24, help="Ending race round (1-based)"),
+	config_path: str = typer.Option("configs/default.yaml", help="Path to YAML config"),
+	skip_existing: bool = typer.Option(True, help="Skip races that already exist"),
+):
+	"""Ingest an entire F1 season with multiple sessions and races."""
+	config = AppConfig.load(config_path)
+	repo = PathRepository(config)
+	repo.ensure()
+	setup_fastf1_cache(config)
+	
+	session_list = [s.strip() for s in sessions.split(",")]
+	total_races = end_round - start_round + 1
+	total_sessions = total_races * len(session_list)
+	
+	print(f"[bold cyan]Bulk Season Ingestion[/bold cyan]: {season}")
+	print(f"📊 Races: {start_round}-{end_round} ({total_races} races)")
+	print(f"📊 Sessions: {session_list} ({len(session_list)} per race)")
+	print(f"📊 Total sessions: {total_sessions}")
+	
+	successful = 0
+	skipped = 0
+	failed = 0
+	
+	for race_round in range(start_round, end_round + 1):
+		print(f"\n🏁 Race {race_round}/{end_round}")
+		
+		for session in session_list:
+			out_dir = Path(config.paths.data_dir) / f"{season}_{race_round}_{session}"
+			required_files = [out_dir / "laps.parquet", out_dir / "results.parquet"]
+			
+			# Check if already exists
+			if skip_existing and all(p.exists() for p in required_files):
+				print(f"  ⏭️  {session}: Already exists, skipping")
+				skipped += 1
+				continue
+			
+			try:
+				print(f"  📥 {session}: Loading data...")
+				dfs = load_session(season=season, round=race_round, session=session)
+				
+				out_dir.mkdir(parents=True, exist_ok=True)
+				
+				for name, df in dfs.items():
+					if isinstance(df, pd.DataFrame) and not df.empty:
+						path = out_dir / f"{name}.parquet"
+						df.to_parquet(path, index=False, engine="pyarrow")
+				
+				print(f"  ✅ {session}: Success")
+				successful += 1
+				
+			except Exception as e:
+				print(f"  ❌ {session}: Failed - {str(e)}")
+				failed += 1
+	
+	print(f"\n[bold green]Season Ingestion Complete[/bold green]")
+	print(f"✅ Successful: {successful}")
+	print(f"⏭️  Skipped: {skipped}")
+	print(f"❌ Failed: {failed}")
+	print(f"📊 Total processed: {successful + skipped + failed}/{total_sessions}")
+
+
+@app.command()
+def list_seasons(
+	data_root: str = typer.Option("data", help="Data directory root"),
+):
+	"""List available seasons and races in the data directory."""
+	data_path = Path(data_root)
+	
+	if not data_path.exists():
+		print(f"[red]Data directory not found: {data_path}[/red]")
+		return
+	
+	# Find all race directories
+	race_dirs = []
+	for item in data_path.iterdir():
+		if item.is_dir() and "_" in item.name:
+			parts = item.name.split("_")
+			if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+				season, round_num, session = parts[0], parts[1], parts[2]
+				race_dirs.append((int(season), int(round_num), session))
+	
+	if not race_dirs:
+		print(f"[yellow]No race data found in {data_path}[/yellow]")
+		return
+	
+	# Group by season
+	seasons = {}
+	for season, round_num, session in race_dirs:
+		if season not in seasons:
+			seasons[season] = {}
+		if round_num not in seasons[season]:
+			seasons[season][round_num] = []
+		seasons[season][round_num].append(session)
+	
+	print(f"[bold cyan]Available Data in {data_path}[/bold cyan]")
+	print("=" * 50)
+	
+	for season in sorted(seasons.keys()):
+		print(f"\n🏁 Season {season}")
+		races = seasons[season]
+		for round_num in sorted(races.keys()):
+			sessions = sorted(races[round_num])
+			print(f"  Round {round_num:2d}: {', '.join(sessions)}")
+	
+	total_seasons = len(seasons)
+	total_races = sum(len(races) for races in seasons.values())
+	total_sessions = len(race_dirs)
+	
+	print(f"\n📊 Summary:")
+	print(f"  Seasons: {total_seasons}")
+	print(f"  Races: {total_races}")
+	print(f"  Sessions: {total_sessions}")
+
+
+@app.command()
 def train(
 	season: int = typer.Option(..., help="F1 season year"),
 	race_round: int = typer.Option(..., help="Championship round (1-based)"),
