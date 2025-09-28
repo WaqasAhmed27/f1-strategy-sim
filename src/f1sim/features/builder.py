@@ -142,13 +142,33 @@ def _add_session_pace_features(df: pd.DataFrame, race_dir: Path) -> pd.DataFrame
 	"""Add session-adjusted pace features comparing different sessions."""
 	df = df.copy()
 	
+	# Extract race info from directory name (e.g., "2024_1_R" -> season=2024, round=1)
+	race_dir_name = race_dir.name
+	parts = race_dir_name.split('_')
+	if len(parts) >= 3:
+		season, round_num, session_type = parts[0], parts[1], parts[2]
+	else:
+		# Fallback: assume current directory is race session
+		season, round_num = "2024", "1"
+		session_type = "R"
+	
 	# Sessions to compare (practice, qualifying vs race)
-	sessions = ['fp1', 'fp2', 'fp3', 'q', 'r']
+	session_mapping = {
+		'FP1': 'fp1',
+		'FP2': 'fp2', 
+		'FP3': 'fp3',
+		'Q': 'q',
+		'R': 'r'
+	}
+	
 	session_paces = {}
+	data_root = race_dir.parent
 	
 	# Load pace data from each session
-	for session in sessions:
-		session_file = race_dir / f"{session}_laps.parquet"
+	for session_code, session_key in session_mapping.items():
+		session_dir = data_root / f"{season}_{round_num}_{session_code}"
+		session_file = session_dir / "laps.parquet"
+		
 		if session_file.exists():
 			try:
 				laps = pd.read_parquet(session_file)
@@ -159,7 +179,7 @@ def _add_session_pace_features(df: pd.DataFrame, race_dir: Path) -> pd.DataFrame
 					
 					# Calculate mean pace per driver
 					pace = laps.groupby('DriverNumber')['LapTime'].mean()
-					session_paces[session] = pace
+					session_paces[session_key] = pace
 			except Exception:
 				continue
 	
@@ -466,6 +486,13 @@ def build_features_from_dir(race_dir: str | Path) -> Tuple[pd.DataFrame, pd.Seri
 
 	# Replace inf/nan with comprehensive cleaning
 	X = df.copy()
+	
+	# Compute race pace delta before filling NaN values
+	if "mean_lap_time" in X.columns:
+		med = float(pd.to_numeric(X["mean_lap_time"], errors="coerce").median())
+		X["race_pace_delta"] = pd.to_numeric(X["mean_lap_time"], errors="coerce") - med
+	else:
+		X["race_pace_delta"] = 0.0
 	
 	# Fill NaN values with sensible defaults
 	X = X.fillna({
