@@ -223,7 +223,7 @@ const LiveRace = () => {
           <Card title="Live Predictions" extra={<Tag color="red">LIVE</Tag>}>
             <List
               dataSource={predictions}
-              renderItem={(item, index) => (
+              renderItem={item => (
                 <List.Item>
                   <List.Item.Meta
                     avatar={
