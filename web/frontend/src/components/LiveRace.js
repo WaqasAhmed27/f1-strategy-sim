@@ -19,6 +19,7 @@ import {
   TrophyOutlined,
   ClockCircleOutlined
 } from '@ant-design/icons';
+import { getApiUrl, getWsUrl } from '../config';
 
 const { Title, Text } = Typography;
 
@@ -46,7 +47,7 @@ const LiveRace = () => {
   }, []);
 
   const connectWebSocket = () => {
-    const ws = new WebSocket('ws://localhost:8000/ws');
+    const ws = new WebSocket(getWsUrl());
     
     ws.onopen = () => {
       setIsConnected(true);
@@ -109,7 +110,7 @@ const LiveRace = () => {
     // Start periodic updates
     intervalRef.current = setInterval(async () => {
       try {
-        const response = await fetch('/live/predict/' + selectedSeason + '/' + selectedRace, {
+        const response = await fetch(getApiUrl(`/live/predict/${selectedSeason}/${selectedRace}`), {
           method: 'POST'
         });
         
@@ -133,7 +134,7 @@ const LiveRace = () => {
 
   const refreshPredictions = async () => {
     try {
-      const response = await fetch('/live/predict/' + selectedSeason + '/' + selectedRace, {
+      const response = await fetch(getApiUrl(`/live/predict/${selectedSeason}/${selectedRace}`), {
         method: 'POST'
       });
       

@@ -20,6 +20,7 @@ import {
   ThunderboltOutlined 
 } from '@ant-design/icons';
 import axios from 'axios';
+import { getApiUrl } from '../config';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -41,10 +42,11 @@ const Dashboard = () => {
 
   const fetchModelInfo = async () => {
     try {
-      const response = await axios.get('/models/info');
+      const response = await axios.get(getApiUrl('/models/info'));
       setModelInfo(response.data);
     } catch (err) {
       console.error('Failed to fetch model info:', err);
+      console.error('API URL:', getApiUrl('/models/info'));
     }
   };
 
@@ -53,7 +55,7 @@ const Dashboard = () => {
     setError(null);
     
     try {
-      const response = await axios.post('/predict', {
+      const response = await axios.post(getApiUrl('/predict'), {
         season: selectedSeason,
         race_round: selectedRace,
         session: 'R'
@@ -63,6 +65,7 @@ const Dashboard = () => {
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to fetch predictions');
       console.error('Prediction error:', err);
+      console.error('API URL:', getApiUrl('/predict'));
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Typography, Table, Tag, Space, Alert } from 'antd';
 import axios from 'axios';
+import { getApiUrl } from '../config';
 
 const { Title, Text } = Typography;
 
@@ -15,11 +16,12 @@ const ModelInfo = () => {
 
   const fetchModelInfo = async () => {
     try {
-      const response = await axios.get('/models/info');
+      const response = await axios.get(getApiUrl('/models/info'));
       setModelInfo(response.data);
     } catch (err) {
       setError('Failed to fetch model information');
       console.error('Model info error:', err);
+      console.error('API URL:', getApiUrl('/models/info'));
     } finally {
       setLoading(false);
     }
