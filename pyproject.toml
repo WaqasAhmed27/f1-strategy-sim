@@ -3,12 +3,27 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "f1sim"
-version = "0.0.1"
-description = "Modular F1 Race Prediction System (MVP scaffold)"
-authors = [{ name = "Waqas Ahmed" }]
+name = "f1-strategy-sim"
+version = "1.0.0"
+description = "A comprehensive Formula 1 race prediction system using machine learning"
+authors = [{ name = "Waqas Ahmed", email = "waqas@example.com" }]
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
+keywords = ["formula1", "f1", "machine-learning", "prediction", "racing", "sports-analytics"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
 	"pandas>=2.2",
 	"numpy>=1.26",
@@ -35,7 +50,14 @@ dev = [
 	"isort",
 	"ruff",
 	"pytest",
-	"pytest-cov"
+	"pytest-cov",
+	"mypy",
+	"pre-commit"
+]
+docs = [
+	"sphinx",
+	"sphinx-rtd-theme",
+	"myst-parser"
 ]
 
 [project.scripts]
@@ -48,4 +70,26 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.ruff]
-line-length = 100 
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true 

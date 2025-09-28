@@ -8,6 +8,9 @@ __pycache__/
 .venv*/
 .env
 .env.*
+*.egg
+dist/
+build/
 
 # Data & artifacts
 /data/
@@ -17,10 +20,38 @@ __pycache__/
 /.fastf1/
 wandb/
 mlruns/
+catboost_info/
 
-# Notebooks
-.ipynb_checkpoints/
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+coverage.xml
+
+# Documentation
+docs/_build/
+docs/build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+.DS_Store?
+
+# Jupyter
+.ipynb_checkpoints/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pre-commit
+.pre-commit-config.yaml.bak 
